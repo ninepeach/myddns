@@ -32,7 +32,7 @@ func init() {
 func main() {
 
 	kingpin.HelpFlag.Short('h')
-	kingpin.Version("0.0.1")
+	kingpin.Version("0.0.2")
 	kingpin.Parse()
 
 	if len(*slack) > 0 {
@@ -46,12 +46,6 @@ func main() {
 			panic("unable to create new slack logger: " + err.Error())
 		}
 	}
-
-	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
-	if err != nil {
-		panic("unable to create CloudFlare client: " + err.Error())
-	}
-	_ = cc
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2, syscall.SIGQUIT)
@@ -67,12 +61,13 @@ func loopTask(sig chan os.Signal, n time.Duration) {
 	taskTicker := time.NewTicker(n * time.Second)
 	defer taskTicker.Stop()
 
+	log.Info("INFO: Run Myddns Task")
 	doTask()
 	for {
 		select {
 		case <-sig:
 			//got signal and quit
-			log.Info("got signal and quit")
+			log.Info("INFO: got signal and quit")
 			log.Stop()
 			return
 		case <-taskTicker.C:
@@ -87,12 +82,18 @@ func doTask() {
 	ipAddr, err := utils.GetIpv4AddrByInterfaceName(*ifname)
 
 	if err != nil {
-		log.Fatal("Error: %v", err)
+		log.Fatal("ERROR: Get ip failed (%v)", err)
+		return
+	}
+
+	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
+	if err != nil {
+		log.Fatal("ERROR: Create CloudFlare client failed (%v)", err)
 		return
 	}
 
 	err = cc.UpdateRecord(ipAddr)
 	if err != nil {
-		log.Fatal("Error: %v", err)
+		log.Fatal("ERROR: Update dns recored failed (%v)", err)
 	}
 }

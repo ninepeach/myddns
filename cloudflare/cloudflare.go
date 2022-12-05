@@ -26,6 +26,7 @@ func NewCloudflareClient(token string, zoneid string, host string) (*Cloudflare,
 }
 
 func (c *Cloudflare) UpdateRecord(ip string) error {
+	fmt.Println(c)
 	records, err := c.client.ListDNSRecords(RecordTypeA)
 	fmt.Println(records, err)
 	if err != nil {
