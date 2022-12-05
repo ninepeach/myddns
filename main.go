@@ -61,13 +61,13 @@ func loopTask(sig chan os.Signal, n time.Duration) {
 	taskTicker := time.NewTicker(n * time.Second)
 	defer taskTicker.Stop()
 
-	log.Info("INFO: Run Myddns Task")
+	log.Info("Run Myddns Task")
 	doTask()
 	for {
 		select {
 		case <-sig:
 			//got signal and quit
-			log.Info("INFO: got signal and quit")
+			log.Info("got signal and quit")
 			log.Stop()
 			return
 		case <-taskTicker.C:
@@ -82,18 +82,18 @@ func doTask() {
 	ipAddr, err := utils.GetIpv4AddrByInterfaceName(*ifname)
 
 	if err != nil {
-		log.Fatal("ERROR: Get ip failed (%v)", err)
+		log.Fatal("Get ip failed. err: %v", err)
 		return
 	}
 
 	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
 	if err != nil {
-		log.Fatal("ERROR: Create CloudFlare client failed (%v)", err)
+		log.Fatal("Create CloudFlare client failed. err: %v", err)
 		return
 	}
 
 	err = cc.UpdateRecord(ipAddr)
 	if err != nil {
-		log.Fatal("ERROR: Update dns recored failed (%v)", err)
+		log.Fatal("Update dns recored failed. err: %v", err)
 	}
 }
