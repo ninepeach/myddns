@@ -1,7 +1,7 @@
 GO         ?= go
 GOFMT      ?= $(GO)fmt
 
-BIN_NAME   ?= mydns
+BIN_NAME   ?= myddns
 BIN_DIR    ?= $(shell pwd)/build
 
 VERSION    ?= $(shell cat VERSION)
