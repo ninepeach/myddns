@@ -51,7 +51,7 @@ func main() {
 	signal.Notify(ch, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2, syscall.SIGQUIT)
 
 	//run loop
-	loopTask(ch, 5)
+	loopTask(ch, 300)
 
 	close(ch)
 }
