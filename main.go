@@ -12,6 +12,10 @@ import (
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
+const (
+    VERSION = "0.0.3"
+)
+
 var (
 	token  = kingpin.Flag("token", "Api Token (string)").Required().String()
 	zoneid = kingpin.Flag("zoneid", "Domain Zone ID (string)").Required().String()
@@ -32,7 +36,7 @@ func init() {
 func main() {
 
 	kingpin.HelpFlag.Short('h')
-	kingpin.Version("0.0.2")
+	kingpin.Version(VERSION)
 	kingpin.Parse()
 
 	if len(*slack) > 0 {
@@ -82,18 +86,18 @@ func doTask() {
 	ipAddr, err := utils.GetIpv4AddrByInterfaceName(*ifname)
 
 	if err != nil {
-		log.Fatal("Get ip failed. err: %v", err)
+		log.Error("Get ip failed. err: %v", err)
 		return
 	}
 
 	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
 	if err != nil {
-		log.Fatal("Create CloudFlare client failed. err: %v", err)
+		log.Error("Create CloudFlare client failed. err: %v", err)
 		return
 	}
 
 	err = cc.UpdateRecord(ipAddr)
 	if err != nil {
-		log.Fatal("Update dns recored failed. err: %v", err)
+		log.Error("Update dns recored failed. err: %v", err)
 	}
 }
