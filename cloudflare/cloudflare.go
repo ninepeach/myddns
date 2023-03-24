@@ -33,7 +33,6 @@ func (c *Cloudflare) UpdateRecord(ip string) error {
 
 	var record Record
 	for i := range records {
-		fmt.Println(records[i].Name, c.client.Host)
 		if records[i].Name == c.client.Host {
 			record = records[i]
 		}
