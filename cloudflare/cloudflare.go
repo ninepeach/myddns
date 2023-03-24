@@ -2,7 +2,6 @@ package cloudflare
 
 import (
 	"errors"
-	"fmt"
 	"log"
 )
 
