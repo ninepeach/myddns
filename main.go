@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,92 +13,97 @@ import (
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
-const (
-    VERSION = "0.0.3"
-)
+const VERSION = "0.1.0"
 
 var (
-	token  = kingpin.Flag("token", "Api Token (string)").Required().String()
-	zoneid = kingpin.Flag("zoneid", "Domain Zone ID (string)").Required().String()
-	name   = kingpin.Flag("name", "Host Name (string)").Required().String()
-	ifname = kingpin.Flag("ifname", "Interface Name (string)").Required().String()
-	slack  = kingpin.Flag("slack", "Slack Webhook (string)").Default("").String()
+	token  = kingpin.Flag("token", "Cloudflare API Token").Required().String()
+	zoneid = kingpin.Flag("zoneid", "Cloudflare Zone ID").Required().String()
+	name   = kingpin.Flag("name", "Record Name (example.com)").Required().String()
+	ifname = kingpin.Flag("ifname", "Local Interface Name (for source=iface)").Default("eth0").String()
+	slack  = kingpin.Flag("slack", "Slack Webhook URL").Default("").String()
+	source = kingpin.Flag("source", "IP source: public|iface").Default("public").String()
+	period = kingpin.Flag("interval", "Update interval in seconds").Default("300").Int()
 )
 
-var cc *cloudflare.Cloudflare
-
 func init() {
-	err := log.NewConsole()
-	if err != nil {
-		panic("unable to create new logger: " + err.Error())
+	if err := log.NewConsole(); err != nil {
+		panic("unable to create console logger: " + err.Error())
 	}
 }
 
 func main() {
-
 	kingpin.HelpFlag.Short('h')
 	kingpin.Version(VERSION)
 	kingpin.Parse()
 
-	if len(*slack) > 0 {
-		err := log.NewSlack(100,
-			log.SlackConfig{
-				Level: log.LevelInfo,
-				URL:   *slack,
-			},
-		)
-		if err != nil {
-			panic("unable to create new slack logger: " + err.Error())
+	if *slack != "" {
+		if err := log.NewSlack(100, log.SlackConfig{Level: log.LevelInfo, URL: *slack}); err != nil {
+			panic("unable to create slack logger: " + err.Error())
 		}
 	}
 
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2, syscall.SIGQUIT)
 
-	//run loop
-	loopTask(ch, 300)
-
+	loopTask(ch, time.Duration(*period))
 	close(ch)
 }
 
-func loopTask(sig chan os.Signal, n time.Duration) {
+var lastIP string
 
-	taskTicker := time.NewTicker(n * time.Second)
+func loopTask(sig chan os.Signal, interval time.Duration) {
+	taskTicker := time.NewTicker(interval * time.Second)
 	defer taskTicker.Stop()
 
-	log.Info("Run Myddns Task")
+	log.Info("Starting MyDDNS %s (interval=%ds, source=%s)", VERSION, *period, *source)
 	doTask()
+
 	for {
 		select {
 		case <-sig:
-			//got signal and quit
-			log.Info("got signal and quit")
+			log.Info("Received signal, exiting gracefully...")
 			log.Stop()
 			return
 		case <-taskTicker.C:
-			// do task
 			doTask()
 		}
 	}
 }
 
 func doTask() {
+	var ipAddr string
+	var err error
 
-	ipAddr, err := utils.GetIpv4AddrByInterfaceName(*ifname)
+	ctx := context.Background()
+
+	switch *source {
+	case "public":
+		ipAddr, err = utils.GetPublicIPv4(ctx)
+	default:
+		ipAddr, err = utils.GetIpv4AddrByInterfaceName(*ifname)
+	}
 
 	if err != nil {
-		log.Error("Get ip failed. err: %v", err)
+		log.Error("Failed to get IP address: %v", err)
+		return
+	}
+
+	if ipAddr == lastIP {
+		log.Info("IP unchanged (%s), skip update", ipAddr)
 		return
 	}
 
 	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
 	if err != nil {
-		log.Error("Create CloudFlare client failed. err: %v", err)
+		log.Error("Failed to create Cloudflare client: %v", err)
 		return
 	}
 
-	err = cc.UpdateRecord(ipAddr)
-	if err != nil {
-		log.Error("Update dns recored failed. err: %v", err)
+	if err := cc.UpdateRecord(ipAddr); err != nil {
+		log.Error("Failed to update DNS record: %v", err)
+		return
 	}
+
+	lastIP = ipAddr
+	log.Info("Updated DNS record successfully → %s", ipAddr)
 }
