@@ -52,6 +52,9 @@ func newCloudflareClient(token string) *CloudflareClient {
 	return &CloudflareClient{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return errors.New("Cloudflare API redirects are forbidden")
+			},
 		},
 		token:   token,
 		baseURL: cloudflareAPI,
@@ -125,9 +128,13 @@ func (c *CloudflareClient) request(
 		return result, fmt.Errorf("Cloudflare rate limit: HTTP 429")
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	const maxResponseSize = 1 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
 		return result, err
+	}
+	if len(data) > maxResponseSize {
+		return result, errors.New("Cloudflare response too large")
 	}
 
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -286,8 +293,14 @@ func (c *CloudflareClient) reconcile(
 	recordType string,
 	ip netip.Addr,
 ) error {
-	if !ip.IsValid() {
-		return errors.New("invalid desired IP")
+	family := 4
+	if recordType == "AAAA" {
+		family = 6
+	} else if recordType != "A" {
+		return errors.New("unsupported DNS record type")
+	}
+	if !validPublicIP(ip, family) {
+		return errors.New("invalid desired public IP for record type")
 	}
 
 	records, err := c.listRecords(

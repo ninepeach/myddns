@@ -48,6 +48,17 @@ func newApp(cfg Config) *App {
 }
 
 func (a *App) sync(ctx context.Context) error {
+	timeout := time.Minute
+	if a.config.CycleTimeout != "" {
+		var err error
+		timeout, err = time.ParseDuration(a.config.CycleTimeout)
+		if err != nil || timeout <= 0 {
+			return errors.New("invalid cycle timeout")
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	var ipv4 netip.Addr
 	var ipv6 netip.Addr
 
@@ -141,7 +152,7 @@ func (a *App) sync(ctx context.Context) error {
 		}
 	}
 
-	return errors.Join(errs...)
+	return errors.Join(append(errs, ctx.Err())...)
 }
 
 func (a *App) run(ctx context.Context) {

@@ -30,6 +30,7 @@ Create `config.json`:
 ```json
 {
   "interval": "5m",
+  "cycle_timeout": "1m",
   "ipv4": true,
   "ipv6": true,
   "zones": [
@@ -70,6 +71,12 @@ Run continuously:
 ```
 
 The default update interval is 5 minutes.
+
+Each sync cycle (including one-shot runs) has a total timeout of 1 minute,
+configurable with `cycle_timeout`. Increase it for large record sets.
+Record names are normalized to lowercase with one trailing dot removed.
+Wildcard names such as `*.example.com` are supported; internationalized
+names must use ASCII Punycode. Duplicate names are rejected after normalization.
 
 ## Linux Service
 

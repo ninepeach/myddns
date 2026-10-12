@@ -11,10 +11,11 @@ import (
 )
 
 type Config struct {
-	Interval string `json:"interval"`
-	IPv4     *bool  `json:"ipv4"`
-	IPv6     *bool  `json:"ipv6"`
-	Zones    []Zone `json:"zones"`
+	CycleTimeout string `json:"cycle_timeout"`
+	Interval     string `json:"interval"`
+	IPv4         *bool  `json:"ipv4"`
+	IPv6         *bool  `json:"ipv6"`
+	Zones        []Zone `json:"zones"`
 }
 
 type Zone struct {
@@ -46,6 +47,14 @@ func LoadConfig(path string) (Config, error) {
 	if cfg.Interval == "" {
 		cfg.Interval = "5m"
 	}
+	if cfg.CycleTimeout == "" {
+		cfg.CycleTimeout = "1m"
+	}
+	for i := range cfg.Zones {
+		for j, name := range cfg.Zones[i].Records {
+			cfg.Zones[i].Records[j] = strings.ToLower(strings.TrimSuffix(name, "."))
+		}
+	}
 
 	if cfg.IPv4 == nil {
 		v := true
@@ -65,11 +74,19 @@ func LoadConfig(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if c.CycleTimeout != "" {
+		if timeout, err := time.ParseDuration(c.CycleTimeout); err != nil || timeout <= 0 {
+			return errors.New("cycle_timeout must be a positive duration")
+		}
+	}
 	interval, err := time.ParseDuration(c.Interval)
 	if err != nil || interval < time.Minute {
 		return errors.New("interval must be at least 1m")
 	}
 
+	if c.IPv4 == nil || c.IPv6 == nil {
+		return errors.New("IP family defaults must be initialized")
+	}
 	if !*c.IPv4 && !*c.IPv6 {
 		return errors.New("IPv4 and IPv6 cannot both be disabled")
 	}
@@ -129,7 +146,10 @@ func validateDNSName(name string) error {
 		return errors.New("trailing dot is not allowed")
 	}
 
-	for _, label := range strings.Split(name, ".") {
+	for i, label := range strings.Split(name, ".") {
+		if i == 0 && label == "*" && strings.Contains(name, ".") {
+			continue
+		}
 		if len(label) == 0 || len(label) > 63 {
 			return errors.New("invalid DNS label length")
 		}
