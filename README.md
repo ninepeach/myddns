@@ -20,27 +20,30 @@ Cloudflare DNS A/AAAA records.
 
 ## Requirements
 
-- Go 1.25+
 - Cloudflare API Token with DNS edit permissions
+- Go 1.25+ only when building from source
 
-## One-command Linux Installation
+## One-command Install / Update
 
 Supports Debian with systemd and Alpine with OpenRC on amd64 and arm64.
 Install `curl` and `ca-certificates` first. Run as root:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ninepeach/myddns/main/install.sh -o /tmp/myddns-install.sh && sh /tmp/myddns-install.sh
+curl -fsSL https://raw.githubusercontent.com/ninepeach/myddns/main/install.sh | sh
 ```
 
-The installer downloads the latest release binary, checks its SHA-256,
-and installs the service. A release containing `myddns_linux_amd64`,
-`myddns_linux_arm64`, and `SHA256SUMS` must exist first; new `v*` tags
-trigger the release workflow automatically.
+Use the same command to install or update to the latest release.
+It detects your system and architecture, checks the binary's SHA-256,
+and installs the matching service. Updates preserve your configuration
+and automatically restart the service if it was running.
+No Go installation is required. [Download releases](https://github.com/ninepeach/myddns/releases/latest).
+
+### First Installation
 
 Edit `/etc/myddns/config.json` with your zone ID and record names, and
 set `CLOUDFLARE_API_TOKEN="your-token"` in `/etc/myddns/token.env`.
-The token file is readable only by root. Existing configuration is preserved
-on subsequent installs. Installation does not start or restart the service.
+The token file is readable only by root. First installation leaves the service
+stopped until you finish configuration and run the start command below.
 
 Debian:
 
@@ -57,8 +60,7 @@ rc-service myddns start
 rc-service myddns status
 ```
 
-After upgrading the binary, restart with `systemctl restart myddns`
-or `rc-service myddns restart`.
+For updates, rerun the install command above. A stopped service stays stopped.
 
 ## Configuration
 

@@ -19,6 +19,13 @@ fi
 command -v curl >/dev/null 2>&1 || { echo "Install curl and ca-certificates first." >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required." >&2; exit 1; }
 
+was_running=false
+if [ "$init" = systemd ]; then
+  if systemctl is-active --quiet myddns; then was_running=true; fi
+else
+  if rc-service myddns status >/dev/null 2>&1; then was_running=true; fi
+fi
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 base=https://github.com/ninepeach/myddns/releases/latest/download
@@ -42,7 +49,12 @@ mkdir -p /etc/myddns /usr/local/bin
 chmod 750 /etc/myddns
 chown root:myddns /etc/myddns
 chmod 755 "$tmp/$asset"
-mv "$tmp/$asset" /usr/local/bin/myddns
+# Replace by rename on the destination filesystem, including on upgrades.
+staged=$(mktemp /usr/local/bin/.myddns.XXXXXX)
+trap 'rm -rf "$tmp"; rm -f "$staged"' EXIT HUP INT TERM
+cp "$tmp/$asset" "$staged"
+chmod 755 "$staged"
+mv -f "$staged" /usr/local/bin/myddns
 if [ ! -f /etc/myddns/config.json ]; then
   printf '%s\n' '{"interval":"5m","cycle_timeout":"1m","ipv4":true,"ipv6":true,"zones":[{"id":"YOUR_ZONE_ID","records":["home.example.com"]}]}' > /etc/myddns/config.json
 fi
@@ -93,6 +105,15 @@ start_pre() {
 }
 SERVICE
   chmod 755 /etc/init.d/myddns
+fi
+if [ "$was_running" = true ]; then
+  if [ "$init" = systemd ]; then
+    systemctl restart myddns
+  else
+    rc-service myddns restart
+  fi
+  echo "Updated and restarted myddns. Existing configuration preserved."
+  exit 0
 fi
 echo "Installed. Edit /etc/myddns/config.json and /etc/myddns/token.env."
 if [ "$init" = systemd ]; then
