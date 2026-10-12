@@ -23,6 +23,43 @@ Cloudflare DNS A/AAAA records.
 - Go 1.25+
 - Cloudflare API Token with DNS edit permissions
 
+## One-command Linux Installation
+
+Supports Debian with systemd and Alpine with OpenRC on amd64 and arm64.
+Install `curl` and `ca-certificates` first. Run as root:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ninepeach/myddns/main/install.sh -o /tmp/myddns-install.sh && sh /tmp/myddns-install.sh
+```
+
+The installer downloads the latest release binary, checks its SHA-256,
+and installs the service. A release containing `myddns_linux_amd64`,
+`myddns_linux_arm64`, and `SHA256SUMS` must exist first; new `v*` tags
+trigger the release workflow automatically.
+
+Edit `/etc/myddns/config.json` with your zone ID and record names, and
+set `CLOUDFLARE_API_TOKEN="your-token"` in `/etc/myddns/token.env`.
+The token file is readable only by root. Existing configuration is preserved
+on subsequent installs. Installation does not start or restart the service.
+
+Debian:
+
+```sh
+systemctl enable --now myddns
+journalctl -u myddns -f
+```
+
+Alpine:
+
+```sh
+rc-update add myddns default
+rc-service myddns start
+rc-service myddns status
+```
+
+After upgrading the binary, restart with `systemctl restart myddns`
+or `rc-service myddns restart`.
+
 ## Configuration
 
 Create `config.json`:
