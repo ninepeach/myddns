@@ -2,108 +2,250 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
-
-	log "github.com/ninepeach/go-clog"
-	"github.com/ninepeach/myddns/cloudflare"
-	"github.com/ninepeach/myddns/utils"
-	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
-const VERSION = "0.1.0"
+const version = "2.0.0"
 
-var (
-	token  = kingpin.Flag("token", "Cloudflare API Token").Required().String()
-	zoneid = kingpin.Flag("zoneid", "Cloudflare Zone ID").Required().String()
-	name   = kingpin.Flag("name", "Record Name (example.com)").Required().String()
-	ifname = kingpin.Flag("ifname", "Local Interface Name (for source=iface)").Default("eth0").String()
-	slack  = kingpin.Flag("slack", "Slack Webhook URL").Default("").String()
-	source = kingpin.Flag("source", "IP source: public|iface").Default("public").String()
-	period = kingpin.Flag("interval", "Update interval in seconds").Default("300").Int()
+var logger = slog.New(
+	slog.NewTextHandler(
+		os.Stdout,
+		&slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		},
+	),
 )
 
-func init() {
-	if err := log.NewConsole(); err != nil {
-		panic("unable to create console logger: " + err.Error())
+type App struct {
+	config Config
+
+	cloudflare *CloudflareClient
+
+	ipv4Client *http.Client
+	ipv6Client *http.Client
+}
+
+func newApp(cfg Config) *App {
+	return &App{
+		config: cfg,
+
+		cloudflare: newCloudflareClient(
+			os.Getenv("CLOUDFLARE_API_TOKEN"),
+		),
+
+		ipv4Client: newIPClient(4),
+		ipv6Client: newIPClient(6),
 	}
+}
+
+func (a *App) sync(ctx context.Context) error {
+	var ipv4 netip.Addr
+	var ipv6 netip.Addr
+
+	var errs []error
+
+	if *a.config.IPv4 {
+		ip, err := detectPublicIP(
+			ctx,
+			a.ipv4Client,
+			4,
+		)
+
+		if err != nil {
+			logger.Warn(
+				"IPv4 detection failed",
+				"error", err,
+			)
+			errs = append(errs, fmt.Errorf("IPv4: %w", err))
+		} else {
+			ipv4 = ip
+			logger.Debug("IPv4 detected", "ip", ip.String())
+		}
+	}
+
+	if *a.config.IPv6 && ctx.Err() == nil {
+		ip, err := detectPublicIP(
+			ctx,
+			a.ipv6Client,
+			6,
+		)
+
+		if err != nil {
+			logger.Warn(
+				"IPv6 detection failed",
+				"error", err,
+			)
+			errs = append(errs, fmt.Errorf("IPv6: %w", err))
+		} else {
+			ipv6 = ip
+			logger.Debug("IPv6 detected", "ip", ip.String())
+		}
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	for _, zone := range a.config.Zones {
+		for _, name := range zone.Records {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+
+			if ipv4.IsValid() {
+				if err := a.cloudflare.reconcile(
+					ctx,
+					zone.ID,
+					name,
+					"A",
+					ipv4,
+				); err != nil {
+					logger.Error(
+						"DNS sync failed",
+						"name", name,
+						"type", "A",
+						"error", err,
+					)
+
+					errs = append(errs, err)
+				}
+			}
+
+			if ipv6.IsValid() && ctx.Err() == nil {
+				if err := a.cloudflare.reconcile(
+					ctx,
+					zone.ID,
+					name,
+					"AAAA",
+					ipv6,
+				); err != nil {
+					logger.Error(
+						"DNS sync failed",
+						"name", name,
+						"type", "AAAA",
+						"error", err,
+					)
+
+					errs = append(errs, err)
+				}
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (a *App) run(ctx context.Context) {
+	interval, _ := time.ParseDuration(a.config.Interval)
+
+	logger.Info(
+		"myddns started",
+		"version", version,
+		"interval", interval.String(),
+	)
+
+	for {
+		if ctx.Err() != nil {
+			break
+		}
+
+		err := a.sync(ctx)
+
+		if err != nil && ctx.Err() == nil {
+			logger.Warn(
+				"sync cycle completed with errors",
+				"error", err,
+			)
+		}
+
+		timer := time.NewTimer(interval)
+
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+
+			logger.Info("myddns stopped")
+			return
+
+		case <-timer.C:
+		}
+	}
+
+	logger.Info("myddns stopped")
 }
 
 func main() {
-	kingpin.HelpFlag.Short('h')
-	kingpin.Version(VERSION)
-	kingpin.Parse()
+	configPath := flag.String(
+		"config",
+		"config.json",
+		"configuration file",
+	)
 
-	if *slack != "" {
-		if err := log.NewSlack(100, log.SlackConfig{Level: log.LevelInfo, URL: *slack}); err != nil {
-			panic("unable to create slack logger: " + err.Error())
-		}
+	once := flag.Bool(
+		"once",
+		false,
+		"run once and exit",
+	)
+
+	showVersion := flag.Bool(
+		"version",
+		false,
+		"show version",
+	)
+
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("myddns", version)
+		return
 	}
 
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR2, syscall.SIGQUIT)
-
-	loopTask(ch, time.Duration(*period))
-	close(ch)
-}
-
-var lastIP string
-
-func loopTask(sig chan os.Signal, interval time.Duration) {
-	taskTicker := time.NewTicker(interval * time.Second)
-	defer taskTicker.Stop()
-
-	log.Info("Starting MyDDNS %s (interval=%ds, source=%s)", VERSION, *period, *source)
-	doTask()
-
-	for {
-		select {
-		case <-sig:
-			log.Info("Received signal, exiting gracefully...")
-			log.Stop()
-			return
-		case <-taskTicker.C:
-			doTask()
-		}
-	}
-}
-
-func doTask() {
-	var ipAddr string
-	var err error
-
-	ctx := context.Background()
-
-	switch *source {
-	case "public":
-		ipAddr, err = utils.GetPublicIPv4(ctx)
-	default:
-		ipAddr, err = utils.GetIpv4AddrByInterfaceName(*ifname)
-	}
-
+	cfg, err := LoadConfig(*configPath)
 	if err != nil {
-		log.Error("Failed to get IP address: %v", err)
+		logger.Error(
+			"failed to load configuration",
+			"error", err,
+		)
+		os.Exit(1)
+	}
+
+	app := newApp(cfg)
+
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
+	if *once {
+		err := app.sync(ctx)
+
+		if err != nil {
+			logger.Error(
+				"sync failed",
+				"error", err,
+			)
+			os.Exit(1)
+		}
+
+		logger.Info("sync completed")
 		return
 	}
 
-	if ipAddr == lastIP {
-		log.Info("IP unchanged (%s), skip update", ipAddr)
-		return
-	}
-
-	cc, err := cloudflare.NewCloudflareClient(*token, *zoneid, *name)
-	if err != nil {
-		log.Error("Failed to create Cloudflare client: %v", err)
-		return
-	}
-
-	if err := cc.UpdateRecord(ipAddr); err != nil {
-		log.Error("Failed to update DNS record: %v", err)
-		return
-	}
-
-	lastIP = ipAddr
-	log.Info("Updated DNS record successfully → %s", ipAddr)
+	app.run(ctx)
 }
