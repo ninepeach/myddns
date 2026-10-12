@@ -1,5 +1,5 @@
 APP := myddns
-VERSION := 2.0.0
+VERSION := 2.0.1
 
 .PHONY: build test fmt vet clean
 
